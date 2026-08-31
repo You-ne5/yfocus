@@ -58,10 +58,10 @@ BarWidget {
     Quickshell.execDetached(["omarchy-shell", "shell", "hide", "youn.yfocus"])
   }
 
+  property string stateDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/youn.yfocus"
   FileView {
     id: queueFile
-    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
-          + "/omarchy/youn.yfocus/queue.json"
+    path: root.stateDir + "/queue.json"
     watchChanges: true
     atomicWrites: true
     printErrors: false
@@ -95,14 +95,40 @@ BarWidget {
     }
   }
 
-  // Bundled CLI path, resolved once; falls back to PATH when missing.
+  function decodeFileUrl(url) {
+    var p = String(url).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(p) } catch (e) { return p }
+  }
+  // Bundled CLI — YFOCUS_BIN → bin/yfocus → PATH (like obsidian-daily-qs)
+  property string _binPath: ""
   function executablePath() {
     if (root._binPath) return root._binPath
-    var url = Qt.resolvedUrl("bin/yfocus").toString()
-    var p = url.replace(/^file:\/\//, "")
-    try { p = decodeURIComponent(p) } catch (e) {}
-    root._binPath = p
-    return p
+    var override = Quickshell.env("YFOCUS_BIN")
+    if (override) { root._binPath = override; return override }
+    var base = decodeFileUrl(Qt.resolvedUrl("bin/yfocus").toString())
+    root._binPath = base
+    return base
   }
-  property string _binPath: ""
+  // Ensure state dir and yfocus on PATH (fresh install)
+  Process {
+    id: ensureStateDir
+    command: ["mkdir", "-p", root.stateDir]
+    onExited: function(code) { queueFile.reload() }
+  }
+  property string bundledBin: decodeFileUrl(Qt.resolvedUrl("bin/yfocus").toString())
+  Process {
+    id: ensureBinSymlink
+    command: ["bash", "-c", "mkdir -p \"$HOME/.local/bin\" && ln -sf \"" + bundledBin + "\" \"$HOME/.local/bin/yfocus\""]
+  }
+  // Migrate legacy state (yfocus-queue, yfocus) → youn.yfocus (one-shot)
+  Process {
+    id: legacyMigrate
+    command: ["bash", "-c", "base=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy\"; new=\"$base/youn.yfocus/queue.json\"; if [ ! -f \"$new\" ]; then for old in \"$base/yfocus/queue.json\" \"$base/yfocus-queue/queue.json\"; do if [ -f \"$old\" ]; then mkdir -p \"$(dirname \"$new\")\" && cp \"$old\" \"$new\"; break; fi; done; fi; true"]
+    onExited: function(code) { queueFile.reload() }
+  }
+  Component.onCompleted: {
+    ensureStateDir.running = true
+    ensureBinSymlink.running = true
+    legacyMigrate.running = true
+  }
 }

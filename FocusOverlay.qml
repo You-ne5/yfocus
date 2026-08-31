@@ -172,10 +172,10 @@ Item {
     }
   }
 
+  property string stateDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/youn.yfocus"
   FileView {
     id: queueFile
-    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
-          + "/omarchy/youn.yfocus/queue.json"
+    path: root.stateDir + "/queue.json"
     watchChanges: true
     atomicWrites: true
     printErrors: false
@@ -184,17 +184,35 @@ Item {
     onFileChanged: reload()
   }
 
+  function decodeFileUrl(url) {
+    var p = String(url).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(p) } catch (e) { return p }
+  }
+  Process {
+    id: ensureStateDir
+    command: ["mkdir", "-p", root.stateDir]
+    onExited: function(code) { queueFile.reload() }
+  }
+  property string bundledBin: decodeFileUrl(Qt.resolvedUrl("bin/yfocus").toString())
+  Process {
+    id: ensureBinSymlink
+    command: ["bash", "-c", "mkdir -p \"$HOME/.local/bin\" && ln -sf \"" + bundledBin + "\" \"$HOME/.local/bin/yfocus\""]
+  }
+  // Migrate legacy state (yfocus-queue, yfocus) → youn.yfocus (one-shot)
+  Process {
+    id: legacyMigrate
+    command: ["bash", "-c", "base=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy\"; new=\"$base/youn.yfocus/queue.json\"; if [ ! -f \"$new\" ]; then for old in \"$base/yfocus/queue.json\" \"$base/yfocus-queue/queue.json\"; do if [ -f \"$old\" ]; then mkdir -p \"$(dirname \"$new\")\" && cp \"$old\" \"$new\"; break; fi; done; fi; true"]
+    onExited: function(code) { queueFile.reload() }
+  }
   Component.onCompleted: {
-    // YFOCUS_BIN overrides the bundled path; useful when running the
-    // plugin straight from a source checkout without a built binary.
     var bin = Quickshell.env("YFOCUS_BIN")
     if (!bin) {
-      var url = Qt.resolvedUrl("bin/yfocus").toString()
-      var path = url.replace(/^file:\/\//, "")
-      try { path = decodeURIComponent(path) } catch (e) {}
-      bin = path
+      bin = decodeFileUrl(Qt.resolvedUrl("bin/yfocus").toString())
     }
     root.executablePath = bin
+    ensureStateDir.running = true
+    ensureBinSymlink.running = true
+    legacyMigrate.running = true
     queueFile.reload()
   }
 

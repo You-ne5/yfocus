@@ -9,6 +9,41 @@ export function queuePath(): string {
   return `${base}/omarchy/youn.yfocus/queue.json`;
 }
 
+/**
+ * Queue locations used by earlier releases, newest first. Read once on
+ * first access so an upgrade does not look like an empty queue.
+ */
+export function legacyQueuePaths(): string[] {
+  const base =
+    process.env.XDG_STATE_HOME ?? `${process.env.HOME}/.local/state`;
+  return [
+    `${base}/omarchy/yfocus/queue.json`,
+    `${base}/omarchy/yfocus-queue/queue.json`,
+  ];
+}
+
+async function maybeMigrateLegacy(): Promise<void> {
+  const { copyFile, stat: stat2 } = await import("node:fs/promises");
+  const newPath = queuePath();
+  try {
+    await stat2(newPath);
+    return; // new exists
+  } catch {}
+  for (const oldPath of legacyQueuePaths()) {
+    if (oldPath === newPath) continue;
+    try {
+      await stat2(oldPath);
+    } catch {
+      continue; // old missing
+    }
+    await ensureDir(newPath);
+    try {
+      await copyFile(oldPath, newPath);
+    } catch {}
+    return;
+  }
+}
+
 async function ensureDir(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
 }
@@ -41,6 +76,10 @@ async function lockIsStale(): Promise<boolean> {
 }
 
 async function acquireLock(): Promise<void> {
+  // mkdir(LOCK_DIR()) below is deliberately non-recursive -- EEXIST is the
+  // test-and-set. That means the state directory has to exist first, which
+  // it does not on a fresh install where nothing has read the queue yet.
+  await ensureDir(LOCK_DIR());
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   for (;;) {
     try {
@@ -73,6 +112,7 @@ async function releaseLock(): Promise<void> {
  * can surface a clean error instead of silently destroying data.
  */
 export async function readQueue(path: string = queuePath()): Promise<QueueState> {
+  if (path === queuePath()) await maybeMigrateLegacy();
   await ensureDir(path);
   let text: string;
   try {
@@ -103,6 +143,7 @@ export async function writeQueue(
   state: QueueState,
   path: string = queuePath(),
 ): Promise<void> {
+  if (path === queuePath()) await maybeMigrateLegacy();
   assertInvariants(state);
   await ensureDir(path);
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;

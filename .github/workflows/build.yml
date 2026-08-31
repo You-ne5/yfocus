@@ -1,0 +1,11 @@
+name: build
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: if [ -f package.json ] || [ -f bun.lockb ]; then bun install --frozen-lockfile 2>/dev/null || bun install; else echo "no package.json, skipping bun install"; fi
+      - run: bun test
+      - run: ./build.sh && ./bin/yfocus --help | grep -q "yfocus"

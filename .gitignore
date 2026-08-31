@@ -1,6 +1,6 @@
 # build artifacts
-bin/yfocus
-bin/*.bun
+/target
+# bin is NOT ignored — `make bundle` commits bun ELFs (like obsidian-daily-qs omarchy/bin)
 
 # node
 node_modules/

@@ -1,24 +1,26 @@
-# youn.yfocus
+# yfocus
 
-Omarchy plugin that helps with task management, it showcases your current task on the omarchy bar, and allows you to quickly enqueue, jump or pop a task
-So it basically allows you to manage your tasks, and constantly keep track of what you're currently working on.
+[![Omarchy marketplace](https://img.shields.io/badge/Omarchy-marketplace-teal)](https://omarchyplugins.com/plugin.html?id=youn.yfocus)
 
-| Key              | Action                          |
-|------------------|---------------------------------|
-| SUPER + E        | Pop current (mark done, promote next) |
-| SUPER + SHIFT + T | Jump (insert at top, becomes current) |
-| SUPER + ALT + T  | Add (append to end of queue)    |
-| SUPER + CTRL + T | Open the full management overlay |
+Omarchy Quattro bar widget for a focused task queue: always shows your current task, jump (insert at top), add (append), or pop (complete + promote next) from the bar.
 
-Clicking the bar chip also opens the manager.
+## Requirements
 
-## Vocabulary
+- Omarchy Quattro (Quickshell-based shell) on Linux
+- `x86_64` — the bundled binary is x86_64 only; on other architectures build from source (`./build.sh`) or point `YFOCUS_BIN` at your own build
+- CLI via bundled `bin/yfocus` or `YFOCUS_BIN` override (no extra env needed for the bar)
 
-- **jump** — insert at position 0; the previous current task shifts to
-  position 1; everything else shifts down by one. Never destructive.
-- **add** — append to the end of the queue. If nothing is current (empty
-  queue, or only completed tasks left), it becomes current right away.
-- **pop** — mark the current task done and promote the next queued task.
+Tasks live in `$XDG_STATE_HOME/omarchy/youn.yfocus/queue.json` (`~/.local/state/omarchy/youn.yfocus/queue.json`).
+
+## Architecture
+
+- **TS backend** (`yfocus`): `ts/cli.ts` → `bin/yfocus` via `bun build --compile --target bun-linux-x64` (static ELF, `~80 MB`). `ts/store.ts` handles `XDG_STATE_HOME`, lock, atomic write; `ts/queue.ts` is the queue logic. Committed as a single `bin/yfocus`.
+- **QML frontend** (`BarWidget.qml` / `FocusOverlay.qml`): `bar-widget` chip + `overlay` manager. Runs the bundled `bin/yfocus`; falls back to `yfocus` on `PATH`/`YFOCUS_BIN`.
+
+```
+yfocus watch (FileView) ──(queue.json)──▶ BarWidget ─▶ FocusOverlay
+yfocus jump/add/pop ──(queue.json)──▶ BarWidget
+```
 
 
 ## screenshots
@@ -37,60 +39,78 @@ Clicking the bar chip also opens the manager.
 
 ## Install
 
-Full install, configuration (keybindings, bar settings, CLI) and deployment
-instructions live in [`docs/INSTALL.md`](docs/INSTALL.md). Quick version:
-
-Requires [bun](https://bun.sh) to build:
-
 ```bash
-git clone <this-repo>
-cd yfocus
-./build.sh
-
-ln -s "$PWD" "$HOME/.config/omarchy/plugins/youn.yfocus"
-omarchy-shell shell rescanPlugins
-omarchy plugin enable youn.yfocus
+omarchy plugin add https://github.com/You-ne5/yfocus.git --enable
 ```
 
-Then wire the hotkeys:
+Update / remove:
 
 ```bash
-./hooks/install.sh
+omarchy plugin update youn.yfocus
+omarchy plugin remove youn.yfocus
 ```
 
-Or add them manually to `~/.config/hypr/bindings.lua`:
+If the bar still shows an error right after an update, run `omarchy restart shell` once. Omarchy hot-reloads QML in place; a full restart drops a stale widget.
+
+The plugin bundles a single `bin/yfocus` (x86_64 static ELF). If it cannot start, the widget tries `yfocus` on `PATH` (`YFOCUS_BIN` override, or `make install` / `ln -sf bin/yfocus ~/.local/bin/yfocus`); if both fail, mutations stay in-memory until a binary is available.
+
+## Usage
+
+- **Bar**: `▸ <current>` or `idleLabel` (`▸ focus`). Click → manager; right-click → `pop` (complete current).
+- **Overlay** (`SUPER+CTRL+T` or bar click, `jump`/`add` modes via `omarchy-shell shell toggle youn.yfocus '{"mode":"…"}'`):
+  - `p` pop, `n` add, `↑`/`↓` select, `Ctrl+↑`/`↓` reorder, `Space` promote, `d` delete, `Shift+D` clear completed, `s` toggle completed, `Esc` close. Jump/add prompts: `Enter` submit, `Esc` cancel.
+- **Vocabulary**: `jump` insert at 0 (previous current → 1), `add` append (becomes current if no current), `pop` mark done + promote next.
+- **Settings** (`omarchy bar set youn.yfocus …`): `idleLabel`.
+
+```bash
+omarchy bar set youn.yfocus idleLabel '▸ focus'
+```
+
+Hotkeys are **opt-in** — no installer touches `bindings.lua`. Add manually to `~/.config/hypr/apps/yfocus.conf` or `bindings.lua`, or run `hooks/install.sh --apply` (creates `apps/yfocus.conf`):
 
 ```lua
--- youn.yfocus:start
 o.bind("SUPER + E", "Pop current focus task", "yfocus pop")
 o.bind("SUPER + SHIFT + T", "yfocus jump", "omarchy-shell shell toggle youn.yfocus '{\"mode\":\"jump\"}'")
 o.bind("SUPER + ALT + T", "yfocus add", "omarchy-shell shell toggle youn.yfocus '{\"mode\":\"add\"}'")
 o.bind("SUPER + CTRL + T", "Open yfocus", "omarchy-shell shell toggle youn.yfocus '{\"mode\":\"manage\"}'")
--- youn.yfocus:end
 ```
 
-(`yfocus` must be on PATH — see `build.sh`.)
-
-## Data
-
-Tasks live in `$XDG_STATE_HOME/omarchy/youn.yfocus/queue.json`
-(default `~/.local/state/omarchy/youn.yfocus/queue.json`). The CLI can drive
-the queue without any UI:
+## CLI
 
 ```bash
-yfocus show            # print queue as JSON
-yfocus jump "title"    # insert at top, becomes current
-yfocus add "title"     # append to end of queue
-yfocus pop             # mark current done, promote next
-yfocus --help          # full command list
+yfocus show              # queue as JSON
+yfocus current           # current title
+yfocus jump "title"      # insert at top, becomes current
+yfocus add "title"       # append; becomes current if none
+yfocus pop               # done + promote next
+yfocus remove <id>
+yfocus reorder <from> <to>
+yfocus set-current <id>
+yfocus clear-completed
+yfocus reset
+yfocus path
 ```
+
+`YFOCUS_BIN` overrides the bundled path.
 
 ## Development
 
 ```bash
-bun test      # pure logic tests
-./build.sh    # compile bin/yfocus
+bun test                          # ts/queue.test.ts + FocusModel.js parity
+omarchy plugin validate .
+qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml FocusOverlay.qml
+./build.sh                        # bun-linux-x64 → bin/yfocus
 ```
 
-See `docs/00-overview.md` for the design and the appendices in `docs/` for
-implementation notes.
+Any edit under `ts/` or `build.sh` requires a fresh `./build.sh` in the same change, since `bin/yfocus` is committed.
+
+### Releasing
+
+1. Bump `manifest.json` version and `CHANGELOG.md`.
+2. Run `./build.sh` on Linux and commit the refreshed `bin/yfocus`.
+3. Open a PR; wait for CI `build` to be green.
+4. Merge, then tag `vX.Y.Z` matching `manifest.json`.
+
+## License
+
+MIT — Copyright (c) 2026 youn
